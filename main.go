@@ -134,8 +134,6 @@ func main() {
 		}
 	}
 
-	fmt.Println(og)
-
 	f, err := os.Create(outputFile)
 	if err != nil {
 		slog.Error("failed to create output file", "err", err)
