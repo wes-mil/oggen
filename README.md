@@ -11,7 +11,7 @@ go install github.com/wes-mil/oggen
 ## Usage
 
 ```bash
-oggen -n 1000 -t 10 -e 50 -o output.json
+oggen -n 1000 -t 10 -e 50 -f json -o output
 ```
 
 `-n` total nodes to create
@@ -20,7 +20,13 @@ oggen -n 1000 -t 10 -e 50 -o output.json
 
 `-e` the number of edges created per tier
 
-`-o` output file name
+`-f` output format: `json` for one OpenGraph file, or `jsonl` for split node and edge files
+
+`-o` output base name
+
+For `-f json`, `-o output` writes `output.json`.
+
+For `-f jsonl`, `-o output` writes `output.nodes.jsonl` and `output.edges.jsonl`.
 
 ## How it works
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -47,13 +49,34 @@ var (
 	numTiers        int
 	numEdgesPerTier int
 	outputFile      string
+	outputFormat    string
 )
+
+const (
+	outputFormatJSON  = "json"
+	outputFormatJSONL = "jsonl"
+)
+
+type outputTargets struct {
+	JSON  string
+	Nodes string
+	Edges string
+}
+
+type generationConfig struct {
+	NumNodes        int
+	NumTiers        int
+	NumEdgesPerTier int
+	Now             func() time.Time
+	Rand            *rand.Rand
+}
 
 func main() {
 	flag.IntVar(&numNodes, "n", 0, "total number of nodes (n > 0)")
 	flag.IntVar(&numTiers, "t", 0, "total number of tiers (25 >= t > 0)")
 	flag.IntVar(&numEdgesPerTier, "e", 0, "number of edges generated per tier")
-	flag.StringVar(&outputFile, "o", fmt.Sprintf("opengraph-%s.json", time.Now().UTC().Format("20060102T150405Z")), "output file name")
+	flag.StringVar(&outputFile, "o", fmt.Sprintf("opengraph-%s", time.Now().UTC().Format("20060102T150405Z")), "output base name")
+	flag.StringVar(&outputFormat, "f", outputFormatJSON, "output format: json or jsonl")
 
 	flag.Parse()
 
@@ -72,81 +95,261 @@ func main() {
 		os.Exit(1)
 	}
 
-	leading := int(math.Log10(float64(numNodes)))
-
-	og := OpenGraph{
-		Metadata: Metadata{
-			SourceKind: "OggenBase",
-		},
-		Graph: Graph{
-			Nodes: make([]Node, numNodes),
-			Edges: make([]Edge, 0),
-		},
+	paths, err := outputPaths(outputFile, outputFormat)
+	if err != nil {
+		slog.Error("invalid output options", "err", err)
+		os.Exit(1)
 	}
 
-	tierSize := numNodes / numTiers
+	config := generationConfig{
+		NumNodes:        numNodes,
+		NumTiers:        numTiers,
+		NumEdgesPerTier: numEdgesPerTier,
+	}
 
-	for i := range numNodes {
+	switch outputFormat {
+	case outputFormatJSON:
+		err = writeJSONOutput(paths.JSON, config)
+	case outputFormatJSONL:
+		err = writeJSONLOutput(paths.Nodes, paths.Edges, config)
+	}
+	if err != nil {
+		slog.Error("failed to write output", "err", err)
+		os.Exit(1)
+	}
+}
+
+func writeJSONOutput(outputFile string, config generationConfig) (err error) {
+	f, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer closeFile(f, &err)
+
+	config = config.withDefaults()
+	writer := bufio.NewWriter(f)
+	encoder := json.NewEncoder(writer)
+
+	if _, err := writer.WriteString(`{"graph":{"nodes":[`); err != nil {
+		return err
+	}
+
+	firstNode := true
+	if err := generateNodes(config, func(node Node) error {
+		if !firstNode {
+			if _, err := writer.WriteString(","); err != nil {
+				return err
+			}
+		}
+		firstNode = false
+		return encoder.Encode(node)
+	}); err != nil {
+		return err
+	}
+
+	if _, err := writer.WriteString(`],"edges":[`); err != nil {
+		return err
+	}
+
+	firstEdge := true
+	if err := generateEdges(config, func(edge Edge) error {
+		if !firstEdge {
+			if _, err := writer.WriteString(","); err != nil {
+				return err
+			}
+		}
+		firstEdge = false
+		return encoder.Encode(edge)
+	}); err != nil {
+		return err
+	}
+
+	if _, err := writer.WriteString(`]},"metadata":`); err != nil {
+		return err
+	}
+	if err := encoder.Encode(Metadata{SourceKind: "OggenBase"}); err != nil {
+		return err
+	}
+	if _, err := writer.WriteString("}"); err != nil {
+		return err
+	}
+	if err := writer.Flush(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func writeJSONLOutput(nodesFile string, edgesFile string, config generationConfig) (err error) {
+	nodes, err := os.Create(nodesFile)
+	if err != nil {
+		return err
+	}
+	defer closeFile(nodes, &err)
+
+	edges, err := os.Create(edgesFile)
+	if err != nil {
+		return err
+	}
+	defer closeFile(edges, &err)
+
+	config = config.withDefaults()
+
+	nodeWriter := bufio.NewWriter(nodes)
+	nodeEncoder := json.NewEncoder(nodeWriter)
+	if err := generateNodes(config, func(node Node) error {
+		return nodeEncoder.Encode(node)
+	}); err != nil {
+		return err
+	}
+	if err := nodeWriter.Flush(); err != nil {
+		return err
+	}
+
+	edgeWriter := bufio.NewWriter(edges)
+	edgeEncoder := json.NewEncoder(edgeWriter)
+	if err := generateEdges(config, func(edge Edge) error {
+		return edgeEncoder.Encode(edge)
+	}); err != nil {
+		return err
+	}
+	if err := edgeWriter.Flush(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func generateNodes(config generationConfig, visit func(Node) error) error {
+	leading := idWidth(config.NumNodes)
+	tierSize := generationTierSize(config)
+
+	for i := range config.NumNodes {
 		tier := i / tierSize
-
-		og.Graph.Nodes[i] = Node{
+		node := Node{
 			ID:    createId(i, leading),
 			Kinds: []string{"OGGEN_NODE"},
 			Properties: map[string]any{
 				"centrality_tier": tier,
-				"created_at":      time.Now(),
+				"created_at":      config.Now(),
 				"rohan?":          true,
 			},
 		}
 
-		id2 := rand.Intn(numNodes)
-		og.Graph.Edges = append(og.Graph.Edges, Edge{
-			Start: Connection{
-				MatchBy: "id",
-				Value:   createId(i, leading),
-			},
-			End: Connection{
-				MatchBy: "id",
-				Value:   createId(id2, leading),
-			},
-			Kind: "OGGEN_EDGE",
-		})
-	}
-
-	for i := range numTiers {
-		endingId := min((i+1)*tierSize, numNodes)
-
-		for range numEdgesPerTier {
-			id1 := rand.Intn(endingId)
-			id2 := rand.Intn(endingId)
-
-			og.Graph.Edges = append(og.Graph.Edges, Edge{
-				Start: Connection{
-					MatchBy: "id",
-					Value:   createId(id1, leading),
-				},
-				End: Connection{
-					MatchBy: "id",
-					Value:   createId(id2, leading),
-				},
-				Kind: "OGGEN_EDGE",
-			})
+		if err := visit(node); err != nil {
+			return err
 		}
 	}
 
-	f, err := os.Create(outputFile)
-	if err != nil {
-		slog.Error("failed to create output file", "err", err)
-		os.Exit(1)
-	}
-	defer f.Close()
+	return nil
+}
 
-	encoder := json.NewEncoder(f)
-	encoder.SetIndent("", "	")
-	err = encoder.Encode(og)
-	if err != nil {
-		slog.Error("failed to write json", "err", err)
-		os.Exit(1)
+func generateEdges(config generationConfig, visit func(Edge) error) error {
+	leading := idWidth(config.NumNodes)
+	tierSize := generationTierSize(config)
+
+	for i := range config.NumNodes {
+		id2 := config.Rand.Intn(config.NumNodes)
+		if err := visit(createEdge(i, id2, leading)); err != nil {
+			return err
+		}
+	}
+
+	for i := range config.NumTiers {
+		endingId := min((i+1)*tierSize, config.NumNodes)
+
+		for range config.NumEdgesPerTier {
+			id1 := config.Rand.Intn(endingId)
+			id2 := config.Rand.Intn(endingId)
+			if err := visit(createEdge(id1, id2, leading)); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func createEdge(startID int, endID int, leading int) Edge {
+	return Edge{
+		Start: Connection{
+			MatchBy: "id",
+			Value:   createId(startID, leading),
+		},
+		End: Connection{
+			MatchBy: "id",
+			Value:   createId(endID, leading),
+		},
+		Kind: "OGGEN_EDGE",
+	}
+}
+
+func outputPaths(base string, format string) (outputTargets, error) {
+	if base == "" {
+		return outputTargets{}, fmt.Errorf("output base name is required")
+	}
+	if err := validateOutputFormat(format); err != nil {
+		return outputTargets{}, err
+	}
+
+	switch format {
+	case outputFormatJSON:
+		if strings.HasSuffix(base, ".json") {
+			return outputTargets{JSON: base}, nil
+		}
+		return outputTargets{JSON: base + ".json"}, nil
+	case outputFormatJSONL:
+		stem := jsonlStem(base)
+		return outputTargets{
+			Nodes: stem + ".nodes.jsonl",
+			Edges: stem + ".edges.jsonl",
+		}, nil
+	default:
+		return outputTargets{}, fmt.Errorf("unsupported output format %q", format)
+	}
+}
+
+func validateOutputFormat(format string) error {
+	switch format {
+	case outputFormatJSON, outputFormatJSONL:
+		return nil
+	default:
+		return fmt.Errorf("unsupported output format %q; expected %q or %q", format, outputFormatJSON, outputFormatJSONL)
+	}
+}
+
+func jsonlStem(base string) string {
+	for _, suffix := range []string{".nodes.jsonl", ".edges.jsonl", ".jsonl", ".json"} {
+		if strings.HasSuffix(base, suffix) {
+			return strings.TrimSuffix(base, suffix)
+		}
+	}
+
+	return base
+}
+
+func (config generationConfig) withDefaults() generationConfig {
+	if config.Now == nil {
+		config.Now = time.Now
+	}
+	if config.Rand == nil {
+		config.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
+	return config
+}
+
+func generationTierSize(config generationConfig) int {
+	return max(1, config.NumNodes/config.NumTiers)
+}
+
+func idWidth(numNodes int) int {
+	return int(math.Log10(float64(numNodes)))
+}
+
+func closeFile(f *os.File, err *error) {
+	if closeErr := f.Close(); *err == nil && closeErr != nil {
+		*err = closeErr
 	}
 }
 
