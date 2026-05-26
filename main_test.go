@@ -2,13 +2,53 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"go/parser"
+	"go/token"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
+
+func TestRepositoryUsesSonicForJSON(t *testing.T) {
+	forbiddenImport := "encoding" + "/" + "json"
+	requiredImport := "github.com/bytedance/sonic"
+	importsSonic := false
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("failed to read repo root: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("failed to parse imports from %s: %v", entry.Name(), err)
+		}
+
+		for _, importSpec := range file.Imports {
+			importPath := strings.Trim(importSpec.Path.Value, `"`)
+			if importPath == forbiddenImport {
+				t.Errorf("%s imports %s; use %s", entry.Name(), forbiddenImport, requiredImport)
+			}
+			if importPath == requiredImport {
+				importsSonic = true
+			}
+		}
+	}
+
+	if !importsSonic {
+		t.Errorf("repo does not import %s", requiredImport)
+	}
+}
 
 func TestOutputPathsForJSON(t *testing.T) {
 	t.Run("appends json extension to base name", func(t *testing.T) {
@@ -86,7 +126,7 @@ func TestWriteJSONOutputStreamsParseableOpenGraph(t *testing.T) {
 	defer f.Close()
 
 	var og OpenGraph
-	if err := json.NewDecoder(f).Decode(&og); err != nil {
+	if err := sonic.ConfigDefault.NewDecoder(f).Decode(&og); err != nil {
 		t.Fatalf("failed to decode JSON output: %v", err)
 	}
 
@@ -150,7 +190,7 @@ func decodeJSONLLines[T any](t *testing.T, path string) []T {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var record T
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+		if err := sonic.Unmarshal(scanner.Bytes(), &record); err != nil {
 			t.Fatalf("failed to parse JSONL line %q: %v", scanner.Text(), err)
 		}
 		records = append(records, record)

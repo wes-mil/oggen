@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -11,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 type OpenGraph struct {
@@ -128,7 +129,7 @@ func writeJSONOutput(outputFile string, config generationConfig) (err error) {
 
 	config = config.withDefaults()
 	writer := bufio.NewWriter(f)
-	encoder := json.NewEncoder(writer)
+	encoder := sonic.ConfigDefault.NewEncoder(writer)
 
 	if _, err := writer.WriteString(`{"graph":{"nodes":[`); err != nil {
 		return err
@@ -196,7 +197,7 @@ func writeJSONLOutput(nodesFile string, edgesFile string, config generationConfi
 	config = config.withDefaults()
 
 	nodeWriter := bufio.NewWriter(nodes)
-	nodeEncoder := json.NewEncoder(nodeWriter)
+	nodeEncoder := sonic.ConfigDefault.NewEncoder(nodeWriter)
 	if err := generateNodes(config, func(node Node) error {
 		return nodeEncoder.Encode(node)
 	}); err != nil {
@@ -207,7 +208,7 @@ func writeJSONLOutput(nodesFile string, edgesFile string, config generationConfi
 	}
 
 	edgeWriter := bufio.NewWriter(edges)
-	edgeEncoder := json.NewEncoder(edgeWriter)
+	edgeEncoder := sonic.ConfigDefault.NewEncoder(edgeWriter)
 	if err := generateEdges(config, func(edge Edge) error {
 		return edgeEncoder.Encode(edge)
 	}); err != nil {
