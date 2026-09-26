@@ -151,6 +151,7 @@ func TestWriteJSONOutputStreamsParseableOpenGraph(t *testing.T) {
 			t.Errorf("default edge kind = %q, want OGGEN_EDGE_1", edge.Kind)
 		}
 	}
+	assertGeneratedEdgeProperties(t, og.Graph.Edges)
 }
 
 func TestWriteJSONLOutputStreamsParseableRecords(t *testing.T) {
@@ -184,6 +185,40 @@ func TestWriteJSONLOutputStreamsParseableRecords(t *testing.T) {
 		if edge.Kind != "OGGEN_EDGE_1" {
 			t.Errorf("default edge kind = %q, want OGGEN_EDGE_1", edge.Kind)
 		}
+	}
+	assertGeneratedEdgeProperties(t, edges)
+}
+
+func assertGeneratedEdgeProperties(t *testing.T, edges []Edge) {
+	t.Helper()
+	weights := make(map[float64]bool)
+	activeValues := make(map[bool]bool)
+	for _, edge := range edges {
+		if len(edge.Properties) != 3 {
+			t.Errorf("edge properties = %v, want created_at, weight, and active", edge.Properties)
+			continue
+		}
+		if got := edge.Properties["created_at"]; got != "2026-05-14T12:00:00Z" {
+			t.Errorf("edge created_at = %v, want 2026-05-14T12:00:00Z", got)
+		}
+		weight, ok := edge.Properties["weight"].(float64)
+		if !ok || weight < 1 || weight > 100 || weight != float64(int(weight)) {
+			t.Errorf("edge weight = %v, want an integer from 1 to 100", edge.Properties["weight"])
+		} else {
+			weights[weight] = true
+		}
+		active, ok := edge.Properties["active"].(bool)
+		if !ok {
+			t.Errorf("edge active = %v, want a boolean", edge.Properties["active"])
+		} else {
+			activeValues[active] = true
+		}
+	}
+	if len(weights) < 2 {
+		t.Error("generated edge weights did not vary")
+	}
+	if len(activeValues) < 2 {
+		t.Error("generated edge active values did not vary")
 	}
 }
 

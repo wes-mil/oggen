@@ -34,6 +34,8 @@ For `-f jsonl`, `-o output` writes `output.nodes.jsonl` and `output.edges.jsonl`
 
 Each node gets one randomly selected kind from `OGGEN_NODE_1` through `OGGEN_NODE_N`, where `N` is `-node-kinds`. Each edge gets one randomly selected kind from `OGGEN_EDGE_1` through `OGGEN_EDGE_N`, where `N` is `-edge-kinds`.
 
+Every edge also has a `properties` object with `created_at` (timestamp), `weight` (random integer from 1 to 100), and `active` (random boolean).
+
 ## How it works
 
 Every node is guaranteed 1 edge connecting to another random node.

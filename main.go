@@ -31,9 +31,10 @@ type Node struct {
 }
 
 type Edge struct {
-	Start Connection `json:"start"`
-	End   Connection `json:"end"`
-	Kind  string     `json:"kind"`
+	Start      Connection     `json:"start"`
+	End        Connection     `json:"end"`
+	Kind       string         `json:"kind"`
+	Properties map[string]any `json:"properties"`
 }
 
 type Connection struct {
@@ -268,7 +269,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 
 	for i := range config.NumNodes {
 		id2 := config.Rand.Intn(config.NumNodes)
-		if err := visit(createEdge(i, id2, leading, randomKind("OGGEN_EDGE", config.NumEdgeKinds, config.Rand))); err != nil {
+		if err := visit(createEdge(i, id2, leading, config)); err != nil {
 			return err
 		}
 	}
@@ -279,7 +280,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 		for range config.NumEdgesPerTier {
 			id1 := config.Rand.Intn(endingId)
 			id2 := config.Rand.Intn(endingId)
-			if err := visit(createEdge(id1, id2, leading, randomKind("OGGEN_EDGE", config.NumEdgeKinds, config.Rand))); err != nil {
+			if err := visit(createEdge(id1, id2, leading, config)); err != nil {
 				return err
 			}
 		}
@@ -288,7 +289,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 	return nil
 }
 
-func createEdge(startID int, endID int, leading int, kind string) Edge {
+func createEdge(startID int, endID int, leading int, config generationConfig) Edge {
 	return Edge{
 		Start: Connection{
 			MatchBy: "id",
@@ -298,7 +299,12 @@ func createEdge(startID int, endID int, leading int, kind string) Edge {
 			MatchBy: "id",
 			Value:   createId(endID, leading),
 		},
-		Kind: kind,
+		Kind: randomKind("OGGEN_EDGE", config.NumEdgeKinds, config.Rand),
+		Properties: map[string]any{
+			"created_at": config.Now(),
+			"weight":     config.Rand.Intn(100) + 1,
+			"active":     config.Rand.Intn(2) == 1,
+		},
 	}
 }
 
