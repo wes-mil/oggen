@@ -6,7 +6,9 @@ import (
 	"go/token"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +141,16 @@ func TestWriteJSONOutputStreamsParseableOpenGraph(t *testing.T) {
 	if len(og.Graph.Edges) != 10 {
 		t.Fatalf("edge count = %d, want 10", len(og.Graph.Edges))
 	}
+	for _, node := range og.Graph.Nodes {
+		if len(node.Kinds) != 1 || node.Kinds[0] != "OGGEN_NODE_1" {
+			t.Errorf("default node kinds = %v, want [OGGEN_NODE_1]", node.Kinds)
+		}
+	}
+	for _, edge := range og.Graph.Edges {
+		if edge.Kind != "OGGEN_EDGE_1" {
+			t.Errorf("default edge kind = %q, want OGGEN_EDGE_1", edge.Kind)
+		}
+	}
 }
 
 func TestWriteJSONLOutputStreamsParseableRecords(t *testing.T) {
@@ -162,6 +174,120 @@ func TestWriteJSONLOutputStreamsParseableRecords(t *testing.T) {
 	}
 	if nodes[0].ID != "oggen_0" {
 		t.Fatalf("first node ID = %q, want %q", nodes[0].ID, "oggen_0")
+	}
+	for _, node := range nodes {
+		if len(node.Kinds) != 1 || node.Kinds[0] != "OGGEN_NODE_1" {
+			t.Errorf("default node kinds = %v, want [OGGEN_NODE_1]", node.Kinds)
+		}
+	}
+	for _, edge := range edges {
+		if edge.Kind != "OGGEN_EDGE_1" {
+			t.Errorf("default edge kind = %q, want OGGEN_EDGE_1", edge.Kind)
+		}
+	}
+}
+
+func TestWriteJSONOutputUsesIndependentKindCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graph.json")
+	config := testGenerationConfig()
+	config.NumNodes = 100
+	config.NumTiers = 1
+	config.NumEdgesPerTier = 100
+	config.NumNodeKinds = 10
+	config.NumEdgeKinds = 2
+	if err := writeJSONOutput(path, config); err != nil {
+		t.Fatalf("writeJSONOutput returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var graph OpenGraph
+	if err := sonic.Unmarshal(data, &graph); err != nil {
+		t.Fatal(err)
+	}
+
+	seenNode10 := false
+	for _, node := range graph.Graph.Nodes {
+		if len(node.Kinds) != 1 {
+			t.Fatalf("node kinds = %v, want exactly one kind", node.Kinds)
+		}
+		number, err := strconv.Atoi(strings.TrimPrefix(node.Kinds[0], "OGGEN_NODE_"))
+		if err != nil || !strings.HasPrefix(node.Kinds[0], "OGGEN_NODE_") || number < 1 || number > 10 {
+			t.Errorf("node kind %q is outside OGGEN_NODE_1 through OGGEN_NODE_10", node.Kinds[0])
+		}
+		seenNode10 = seenNode10 || number == 10
+	}
+	if !seenNode10 {
+		t.Error("configured upper node kind OGGEN_NODE_10 was never generated")
+	}
+
+	seenEdge2 := false
+	for _, edge := range graph.Graph.Edges {
+		if edge.Kind != "OGGEN_EDGE_1" && edge.Kind != "OGGEN_EDGE_2" {
+			t.Errorf("edge kind = %q, want OGGEN_EDGE_1 or OGGEN_EDGE_2", edge.Kind)
+		}
+		seenEdge2 = seenEdge2 || edge.Kind == "OGGEN_EDGE_2"
+	}
+	if !seenEdge2 {
+		t.Error("configured upper edge kind OGGEN_EDGE_2 was never generated")
+	}
+}
+
+func TestCLIKindCountFlagsApplyToJSONL(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "graph")
+	cmd := exec.Command("go", "run", ".", "-n", "40", "-t", "2", "-e", "20", "-f", "jsonl", "-o", base, "-node-kinds", "2", "-edge-kinds", "3")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("oggen failed: %v\n%s", err, output)
+	}
+
+	nodes := decodeJSONLLines[Node](t, base+".nodes.jsonl")
+	edges := decodeJSONLLines[Edge](t, base+".edges.jsonl")
+	seenNode2 := false
+	for _, node := range nodes {
+		if len(node.Kinds) != 1 || (node.Kinds[0] != "OGGEN_NODE_1" && node.Kinds[0] != "OGGEN_NODE_2") {
+			t.Errorf("node kinds = %v, want one of OGGEN_NODE_1 or OGGEN_NODE_2", node.Kinds)
+			continue
+		}
+		seenNode2 = seenNode2 || node.Kinds[0] == "OGGEN_NODE_2"
+	}
+	if !seenNode2 {
+		t.Error("OGGEN_NODE_2 was never generated")
+	}
+	seenEdge3 := false
+	for _, edge := range edges {
+		if edge.Kind != "OGGEN_EDGE_1" && edge.Kind != "OGGEN_EDGE_2" && edge.Kind != "OGGEN_EDGE_3" {
+			t.Errorf("edge kind = %q, want OGGEN_EDGE_1 through OGGEN_EDGE_3", edge.Kind)
+		}
+		seenEdge3 = seenEdge3 || edge.Kind == "OGGEN_EDGE_3"
+	}
+	if !seenEdge3 {
+		t.Error("OGGEN_EDGE_3 was never generated")
+	}
+}
+
+func TestCLIRejectsKindCountsOutsideOneToTen(t *testing.T) {
+	for _, tc := range []struct {
+		flag  string
+		value string
+	}{
+		{"-node-kinds", "0"},
+		{"-node-kinds", "11"},
+		{"-edge-kinds", "0"},
+		{"-edge-kinds", "11"},
+	} {
+		t.Run(tc.flag+"="+tc.value, func(t *testing.T) {
+			base := filepath.Join(t.TempDir(), "graph")
+			cmd := exec.Command("go", "run", ".", "-n", "4", "-t", "2", "-e", "2", "-o", base, tc.flag, tc.value)
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("oggen accepted %s=%s", tc.flag, tc.value)
+			}
+			if !strings.Contains(string(output), tc.flag) {
+				t.Errorf("error %q does not identify %s", output, tc.flag)
+			}
+		})
 	}
 }
 

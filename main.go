@@ -49,6 +49,8 @@ var (
 	numNodes        int
 	numTiers        int
 	numEdgesPerTier int
+	numNodeKinds    int
+	numEdgeKinds    int
 	outputFile      string
 	outputFormat    string
 )
@@ -56,6 +58,7 @@ var (
 const (
 	outputFormatJSON  = "json"
 	outputFormatJSONL = "jsonl"
+	maxKinds          = 10
 )
 
 type outputTargets struct {
@@ -68,6 +71,8 @@ type generationConfig struct {
 	NumNodes        int
 	NumTiers        int
 	NumEdgesPerTier int
+	NumNodeKinds    int
+	NumEdgeKinds    int
 	Now             func() time.Time
 	Rand            *rand.Rand
 }
@@ -76,6 +81,8 @@ func main() {
 	flag.IntVar(&numNodes, "n", 0, "total number of nodes (n > 0)")
 	flag.IntVar(&numTiers, "t", 0, "total number of tiers (25 >= t > 0)")
 	flag.IntVar(&numEdgesPerTier, "e", 0, "number of edges generated per tier")
+	flag.IntVar(&numNodeKinds, "node-kinds", 1, "number of node kinds (1-10)")
+	flag.IntVar(&numEdgeKinds, "edge-kinds", 1, "number of edge kinds (1-10)")
 	flag.StringVar(&outputFile, "o", fmt.Sprintf("opengraph-%s", time.Now().UTC().Format("20060102T150405Z")), "output base name")
 	flag.StringVar(&outputFormat, "f", outputFormatJSON, "output format: json or jsonl")
 
@@ -95,6 +102,14 @@ func main() {
 		slog.Error("-e is required and must satisfy e > 0", "e", numEdgesPerTier)
 		os.Exit(1)
 	}
+	if numNodeKinds < 1 || numNodeKinds > maxKinds {
+		slog.Error("-node-kinds must be between 1 and 10", "node-kinds", numNodeKinds)
+		os.Exit(1)
+	}
+	if numEdgeKinds < 1 || numEdgeKinds > maxKinds {
+		slog.Error("-edge-kinds must be between 1 and 10", "edge-kinds", numEdgeKinds)
+		os.Exit(1)
+	}
 
 	paths, err := outputPaths(outputFile, outputFormat)
 	if err != nil {
@@ -106,6 +121,8 @@ func main() {
 		NumNodes:        numNodes,
 		NumTiers:        numTiers,
 		NumEdgesPerTier: numEdgesPerTier,
+		NumNodeKinds:    numNodeKinds,
+		NumEdgeKinds:    numEdgeKinds,
 	}
 
 	switch outputFormat {
@@ -229,7 +246,7 @@ func generateNodes(config generationConfig, visit func(Node) error) error {
 		tier := i / tierSize
 		node := Node{
 			ID:    createId(i, leading),
-			Kinds: []string{"OGGEN_NODE"},
+			Kinds: []string{randomKind("OGGEN_NODE", config.NumNodeKinds, config.Rand)},
 			Properties: map[string]any{
 				"centrality_tier": tier,
 				"created_at":      config.Now(),
@@ -251,7 +268,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 
 	for i := range config.NumNodes {
 		id2 := config.Rand.Intn(config.NumNodes)
-		if err := visit(createEdge(i, id2, leading)); err != nil {
+		if err := visit(createEdge(i, id2, leading, randomKind("OGGEN_EDGE", config.NumEdgeKinds, config.Rand))); err != nil {
 			return err
 		}
 	}
@@ -262,7 +279,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 		for range config.NumEdgesPerTier {
 			id1 := config.Rand.Intn(endingId)
 			id2 := config.Rand.Intn(endingId)
-			if err := visit(createEdge(id1, id2, leading)); err != nil {
+			if err := visit(createEdge(id1, id2, leading, randomKind("OGGEN_EDGE", config.NumEdgeKinds, config.Rand))); err != nil {
 				return err
 			}
 		}
@@ -271,7 +288,7 @@ func generateEdges(config generationConfig, visit func(Edge) error) error {
 	return nil
 }
 
-func createEdge(startID int, endID int, leading int) Edge {
+func createEdge(startID int, endID int, leading int, kind string) Edge {
 	return Edge{
 		Start: Connection{
 			MatchBy: "id",
@@ -281,7 +298,7 @@ func createEdge(startID int, endID int, leading int) Edge {
 			MatchBy: "id",
 			Value:   createId(endID, leading),
 		},
-		Kind: "OGGEN_EDGE",
+		Kind: kind,
 	}
 }
 
@@ -330,6 +347,12 @@ func jsonlStem(base string) string {
 }
 
 func (config generationConfig) withDefaults() generationConfig {
+	if config.NumNodeKinds == 0 {
+		config.NumNodeKinds = 1
+	}
+	if config.NumEdgeKinds == 0 {
+		config.NumEdgeKinds = 1
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -338,6 +361,13 @@ func (config generationConfig) withDefaults() generationConfig {
 	}
 
 	return config
+}
+
+func randomKind(prefix string, count int, rng *rand.Rand) string {
+	if count == 1 {
+		return prefix + "_1"
+	}
+	return fmt.Sprintf("%s_%d", prefix, rng.Intn(count)+1)
 }
 
 func generationTierSize(config generationConfig) int {

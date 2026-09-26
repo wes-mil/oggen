@@ -11,7 +11,7 @@ go install github.com/wes-mil/oggen
 ## Usage
 
 ```bash
-oggen -n 1000 -t 10 -e 50 -f json -o output
+oggen -n 1000 -t 10 -e 50 -node-kinds 10 -edge-kinds 10 -f json -o output
 ```
 
 `-n` total nodes to create
@@ -20,6 +20,10 @@ oggen -n 1000 -t 10 -e 50 -f json -o output
 
 `-e` the number of edges created per tier
 
+`-node-kinds` number of possible node kinds, from 1 to 10 (default: 1)
+
+`-edge-kinds` number of possible edge kinds, from 1 to 10 (default: 1)
+
 `-f` output format: `json` for one OpenGraph file, or `jsonl` for split node and edge files
 
 `-o` output base name
@@ -27,6 +31,8 @@ oggen -n 1000 -t 10 -e 50 -f json -o output
 For `-f json`, `-o output` writes `output.json`.
 
 For `-f jsonl`, `-o output` writes `output.nodes.jsonl` and `output.edges.jsonl`.
+
+Each node gets one randomly selected kind from `OGGEN_NODE_1` through `OGGEN_NODE_N`, where `N` is `-node-kinds`. Each edge gets one randomly selected kind from `OGGEN_EDGE_1` through `OGGEN_EDGE_N`, where `N` is `-edge-kinds`.
 
 ## How it works
 
